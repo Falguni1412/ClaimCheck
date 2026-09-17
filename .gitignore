@@ -1,34 +1,9 @@
-# Byte-compiled / optimized / DLL files
+node_modules/
+.next/
+.env
+.env.*
+!.env.example
 __pycache__/
-*.py[cod]
-*$py.class
-
-# Virtual environments
+*.pyc
+.venv/
 venv/
-env/
-.env/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Distribution / packaging
-dist/
-build/
-*.egg-info/
-
-# Models (download at runtime)
-models/
-
-# Logs
-*.log
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Temporary files
-*.tmp
-*.bak

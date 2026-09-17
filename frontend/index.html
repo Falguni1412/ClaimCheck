@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClaimCheck — LLM Verification Engine</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #0a0a0f;
+            color: #ffffff;
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        /* Header */
+        header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+
+        .logo {
+            font-size: 48px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #00d4ff 0%, #7b2cbf 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .tagline {
+            font-size: 18px;
+            color: rgba(255, 255, 255, 0.6);
+            margin-top: 10px;
+        }
+
+        /* Main Layout */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        @media (max-width: 900px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Input Panels */
+        .panel {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 25px;
+        }
+
+        .panel-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #00d4ff;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .panel-title .icon {
+            font-size: 20px;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 200px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 15px;
+            color: #ffffff;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 14px;
+            resize: vertical;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #00d4ff;
+        }
+
+        textarea::placeholder {
+            color: rgba(255, 255, 255, 0.3);
+        }
+
+        /* Buttons */
+        .btn-primary {
+            width: 100%;
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
+            border: none;
+            border-radius: 8px;
+            color: #0a0a0f;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(0, 212, 255, 0.3);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Results */
+        .results-panel {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 25px;
+            margin-top: 30px;
+        }
+
+        /* Summary Stats */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        @media (max-width: 600px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        .stat-card {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+        }
+
+        .stat-card .number {
+            font-size: 28px;
+            font-weight: 700;
+        }
+
+        .stat-card .label {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.6);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stat-card.risk .number {
+            color: #f44336;
+        }
+
+        .stat-card.supported .number {
+            color: #4caf50;
+        }
+
+        .stat-card.contradicted .number {
+            color: #f44336;
+        }
+
+        .stat-card.unverifiable .number {
+            color: #ffc107;
+        }
+
+        /* Claim Cards */
+        .claim-card {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 15px;
+            border-left: 4px solid;
+        }
+
+        .claim-card.supported {
+            border-color: #4caf50;
+        }
+
+        .claim-card.contradicted {
+            border-color: #f44336;
+            background: rgba(244, 67, 54, 0.05);
+        }
+
+        .claim-card.unverifiable {
+            border-color: #ffc107;
+        }
+
+        .claim-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .verdict-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .verdict-badge.supported {
+            background: rgba(76, 175, 80, 0.2);
+            color: #4caf50;
+        }
+
+        .verdict-badge.contradicted {
+            background: rgba(244, 67, 54, 0.2);
+            color: #f44336;
+        }
+
+        .verdict-badge.unverifiable {
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+        }
+
+        .confidence {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .claim-text {
+            font-size: 15px;
+            color: #ffffff;
+            margin-bottom: 12px;
+            line-height: 1.5;
+        }
+
+        .evidence {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            padding: 12px;
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.7);
+            font-family: 'Consolas', monospace;
+        }
+
+        .evidence-label {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.4);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 6px;
+        }
+
+        /* Loading State */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            color: #00d4ff;
+        }
+
+        .spinner {
+            width: 30px;
+            height: 30px;
+            border: 3px solid rgba(0, 212, 255, 0.2);
+            border-top-color: #00d4ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 15px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Error State */
+        .error-message {
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            border-radius: 8px;
+            padding: 15px;
+            color: #f44336;
+            margin-top: 20px;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 30px;
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 14px;
+            margin-top: 50px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        footer a {
+            color: #00d4ff;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* Demo Button */
+        .demo-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #7b2cbf;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            box-shadow: 0 5px 20px rgba(123, 44, 191, 0.4);
+            transition: all 0.3s;
+        }
+
+        .demo-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(123, 44, 191, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1 class="logo">ClaimCheck</h1>
+            <p class="tagline">Verify every LLM claim. Show the evidence.</p>
+        </header>
+
+        <div class="main-grid">
+            <!-- Input: LLM Answer -->
+            <div class="panel">
+                <h2 class="panel-title">
+                    <span class="icon">🤖</span>
+                    LLM Answer
+                </h2>
+                <textarea
+                    id="llmAnswer"
+                    placeholder="Paste the LLM-generated answer here...
+
+Example:
+Metformin should be taken on an empty stomach. It can be combined with insulin therapy. Lactic acidosis occurs in 10% of patients. Nausea is a common side effect."
+                ></textarea>
+            </div>
+
+            <!-- Input: Source Documents -->
+            <div class="panel">
+                <h2 class="panel-title">
+                    <span class="icon">📄</span>
+                    Source Documents
+                </h2>
+                <textarea
+                    id="sources"
+                    placeholder="Paste source documents here...
+
+Example:
+Metformin is a medication for type 2 diabetes. Take with meals to reduce stomach upset.
+
+Lactic acidosis is rare, occurring in approximately 1 in 30,000 patient-years.
+
+Metformin can be safely combined with insulin therapy."
+                ></textarea>
+            </div>
+        </div>
+
+        <button class="btn-primary" id="verifyBtn" onclick="verifyClaims()">
+            <span>🔍</span>
+            Verify Claims
+        </button>
+
+        <!-- Results Section -->
+        <div id="results" style="display: none;">
+            <div class="results-panel">
+                <h3 style="margin-bottom: 20px; color: #00d4ff;">Verification Results</h3>
+
+                <!-- Stats -->
+                <div class="stats-grid">
+                    <div class="stat-card risk">
+                        <div class="number" id="riskScore">0%</div>
+                        <div class="label">Risk Score</div>
+                    </div>
+                    <div class="stat-card supported">
+                        <div class="number" id="supportedCount">0</div>
+                        <div class="label">Supported</div>
+                    </div>
+                    <div class="stat-card contradicted">
+                        <div class="number" id="contradictedCount">0</div>
+                        <div class="label">Contradicted</div>
+                    </div>
+                    <div class="stat-card unverifiable">
+                        <div class="number" id="unverifiableCount">0</div>
+                        <div class="label">Unverifiable</div>
+                    </div>
+                </div>
+
+                <!-- Claims -->
+                <div id="claimsList"></div>
+            </div>
+        </div>
+
+        <!-- Error -->
+        <div id="error" style="display: none;">
+            <div class="error-message" id="errorText"></div>
+        </div>
+
+        <!-- Footer -->
+        <footer>
+            <p>ClaimCheck — Open-source LLM Verification Engine</p>
+            <p style="margin-top: 10px;">
+                <a href="https://github.com/falgunitimande72/claimcheck" target="_blank">GitHub</a>
+                &nbsp;|&nbsp;
+                Built for Morrow 1.0 Hackathon
+            </p>
+        </footer>
+    </div>
+
+    <!-- Demo Button -->
+    <button class="demo-btn" onclick="loadDemo()">📋 Load Demo</button>
+
+    <script>
+        // API endpoint - change this to your deployed URL
+        const API_URL = 'http://localhost:8000';
+
+        async function verifyClaims() {
+            const answer = document.getElementById('llmAnswer').value.trim();
+            const sourcesText = document.getElementById('sources').value.trim();
+
+            if (!answer) {
+                showError('Please enter an LLM answer to verify.');
+                return;
+            }
+
+            if (!sourcesText) {
+                showError('Please enter at least one source document.');
+                return;
+            }
+
+            // Split sources by double newlines or single newlines
+            const sources = sourcesText.split(/\n\s*\n|\n/).filter(s => s.trim());
+
+            if (sources.length === 0) {
+                showError('Could not parse source documents. Please separate with blank lines.');
+                return;
+            }
+
+            // Show loading
+            document.getElementById('results').style.display = 'none';
+            document.getElementById('error').style.display = 'none';
+            const btn = document.getElementById('verifyBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Analyzing...';
+
+            try {
+                const response = await fetch(`${API_URL}/verify`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        answer: answer,
+                        sources: sources,
+                        use_chunking: true
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || 'Verification failed');
+                }
+
+                const data = await response.json();
+                displayResults(data);
+
+            } catch (error) {
+                if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                    showError('Could not connect to the API. Make sure the backend server is running on port 8000.');
+                } else {
+                    showError(error.message);
+                }
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span>🔍</span> Verify Claims';
+            }
+        }
+
+        function displayResults(data) {
+            document.getElementById('results').style.display = 'block';
+            document.getElementById('error').style.display = 'none';
+
+            // Update stats
+            const riskPercent = Math.round(data.risk_score * 100);
+            document.getElementById('riskScore').textContent = `${riskPercent}%`;
+            document.getElementById('supportedCount').textContent = data.summary.supported;
+            document.getElementById('contradictedCount').textContent = data.summary.contradicted;
+            document.getElementById('unverifiableCount').textContent = data.summary.unverifiable;
+
+            // Display claims
+            const claimsList = document.getElementById('claimsList');
+            claimsList.innerHTML = '';
+
+            for (const claim of data.claims) {
+                const card = document.createElement('div');
+                card.className = `claim-card ${claim.verdict.toLowerCase()}`;
+
+                const verdictClass = claim.verdict.toLowerCase();
+                const verdictIcon = verdictClass === 'supported' ? '✅' :
+                                   verdictClass === 'contradicted' ? '❌' : '⚠️';
+
+                card.innerHTML = `
+                    <div class="claim-header">
+                        <span class="verdict-badge ${verdictClass}">
+                            ${verdictIcon} ${claim.verdict}
+                        </span>
+                        <span class="confidence">${Math.round(claim.confidence * 100)}% confidence</span>
+                    </div>
+                    <div class="claim-text">${escapeHtml(claim.claim)}</div>
+                    <div class="evidence">
+                        <div class="evidence-label">Evidence</div>
+                        ${escapeHtml(claim.evidence || 'No evidence found')}
+                    </div>
+                `;
+
+                claimsList.appendChild(card);
+            }
+        }
+
+        function showError(message) {
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('errorText').textContent = message;
+            document.getElementById('results').style.display = 'none';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function loadDemo() {
+            document.getElementById('llmAnswer').value = `Metformin should be taken on an empty stomach. It can be combined with insulin therapy. Lactic acidosis occurs in 10% of patients. Nausea is a common side effect.`;
+
+            document.getElementById('sources').value = `Metformin is a medication for type 2 diabetes. Take metformin with meals to reduce stomach upset. Do not take on an empty stomach.
+
+Common side effects include nausea, diarrhea, and stomach pain. Lactic acidosis is rare, occurring in approximately 1 in 30,000 patient-years.
+
+Metformin can be safely combined with insulin therapy under medical supervision. This combination is commonly prescribed for patients with poorly controlled diabetes.`;
+
+            // Scroll to verify button
+            document.getElementById('verifyBtn').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Keyboard shortcut
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                verifyClaims();
+            }
+        });
+    </script>
+</body>
+</html>

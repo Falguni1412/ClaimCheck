@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --claim-500: #7b2cbf;
+  --claim-600: #5a24a0;
+}
+
+body {
+  background: #0a0a0f;
+  color: #ffffff;
+  line-height: 1.6;
+}
+
+.claim-card {
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 12px;
+  border-left: 4px solid;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.claim-card.supported { border-color: #4caf50; }
+.claim-card.contradicted { border-color: #f44336; background: rgba(244, 67, 54, 0.05); }
+.claim-card.unverifiable { border-color: #ffc107; }
+
+.verdict-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.verdict-badge.supported { background: rgba(76, 175, 80, 0.2); color: #4caf50; }
+.verdict-badge.contradicted { background: rgba(244, 67, 54, 0.2); color: #f44336; }
+.verdict-badge.unverifiable { background: rgba(255, 193, 7, 0.2); color: #ffc107; }
+
+.stat-card {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+}
+.stat-card .number { font-size: 28px; font-weight: 700; }
+.stat-card .label { font-size: 12px; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 1px; }
+.stat-card.risk .number { color: #f44336; }
+.stat-card.supported .number { color: #4caf50; }
+.stat-card.contradicted .number { color: #f44336; }
+.stat-card.unverifiable .number { color: #ffc107; }

@@ -48,12 +48,12 @@ class Claim:
 
 # Patterns for splitting compound sentences on coordinating conjunctions
 COMPOUND_SPLIT_PATTERNS = [
-    (r",\s+and\s+(?=(?:it|this|that|they|he|she|the|these|those|metformin|patients?|users?|you|we|i|also|therefore|thus))", re.IGNORECASE),
+    (r",\s+and\s+(?=(?:it|this|that|they|he|she|the|these|those|metformin|patients?|users?|you|we|i|also|can|may|will|should|must|is|are|was|were)\b)", re.IGNORECASE),
+    (r"\s+and\s+(?=(?:can|may|will|should|must|is|are|was|were|has|have|had)\b)", re.IGNORECASE),
     (r",\s+(?:but|however|although|though|yet|whereas)\s+", re.IGNORECASE),
-    (r";\s+(?=(?:it|this|that|they|he|she|the|these|those|metformin|patients?|users?|you|we|i))", re.IGNORECASE),
+    (r";\s+(?=(?:it|this|that|they|he|she|the|these|those|metformin|patients?|users?|you|we|i)\b)", re.IGNORECASE),
     (r",\s+(?:additionally|moreover|furthermore|also)\s+", re.IGNORECASE),
 ]
-
 HEDGE_PREFIX = re.compile(
     r"^(?:allegedly|reportedly|supposedly|apparently|arguably|possibly|perhaps|"
     r"it\s+(?:is|seems|appears)\s+(?:that|likely\s+that)|"
@@ -282,20 +282,40 @@ def decompose_into_claims(text: str, min_claim_length: int = 15) -> List[Claim]:
 
 
 def _split_compound_sentence(sentence: str) -> List[str]:
-    """Split a compound sentence into individual claims using coordinating conjunctions."""
+    """Split a compound sentence into individual claims while preserving the subject."""
     result = [sentence]
+
     for pattern, flags in COMPOUND_SPLIT_PATTERNS:
         new_result = []
+
         for piece in result:
             parts = re.split(pattern, piece, flags=flags)
-            for p in parts:
+
+            if len(parts) == 1:
+                new_result.append(piece)
+                continue
+
+            subject = _guess_subject(piece)
+
+            for index, p in enumerate(parts):
                 p = p.strip(" ,;:")
-                if p:
-                    new_result.append(p)
+
+                if not p:
+                    continue
+
+                if index > 0 and subject:
+                    if not re.match(
+                        rf"^{re.escape(subject)}\b",
+                        p,
+                        re.IGNORECASE,
+                    ):
+                        p = f"{subject} {p}"
+
+                new_result.append(p)
+
         result = new_result
+
     return result
-
-
 def extract_named_entities(text: str) -> dict:
     """Extract named entities (kept for backward compatibility)."""
     nlp = _get_nlp() if SPACY_AVAILABLE else None

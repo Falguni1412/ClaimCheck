@@ -1,27 +1,36 @@
+
 /**
  * API client for ClaimCheck backend.
  * Provides typed request/response helpers for the frontend.
  */
-import { useStore } from "./store";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { useState } from "react";
+import { useStore } from "../lib/store";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // ── request helpers ──────────────────────────────────────────────────
+
 function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${API_BASE}${path}`;
+
   return fetch(url, {
     headers: {
       "Content-Type": "application/json",
       ...(useStore.getState().authToken
-        ? { Authorization: `Bearer ${useStore.getState().authToken}` }
+        ? {
+          Authorization: `Bearer ${useStore.getState().authToken}`,
+        }
         : {}),
     },
     ...init,
   }).then(async (res) => {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || `Request failed: ${res.status}`);
+      throw new Error(
+        err.detail || `Request failed: ${res.status}`
+      );
     }
+
     return res.json() as Promise<T>;
   });
 }
@@ -87,6 +96,8 @@ export async function verifyClaims(
   });
 }
 
+// ── batch verification ───────────────────────────────────────────────
+
 export interface BatchVerifyRequest {
   items: VerifyRequest[];
   parallel?: boolean;
@@ -110,6 +121,8 @@ export async function verifyBatch(
   });
 }
 
+// ── streaming verification ──────────────────────────────────────────
+
 export interface StreamingResult {
   claim: string;
   verdict: "SUPPORTED" | "CONTRADICTED" | "UNVERIFIABLE";
@@ -120,7 +133,14 @@ export interface StreamingResult {
     unverifiable: number;
     contradicted: number;
   };
-  numerical_check?: any;
+  numerical_check?: {
+    consistent?: boolean;
+    claim_value?: number;
+    evidence_value?: number;
+    ratio?: number;
+    note?: string;
+    unit_mismatch?: string;
+  };
   explanation?: string;
 }
 
@@ -129,12 +149,16 @@ export interface StreamVerificationResponse {
   total_claims: number;
 }
 
-export async function streamVerify(
+export async function* streamVerify(
   data: VerifyRequest
-): Promise<AsyncGenerator<StreamingResult>> {
+): AsyncGenerator<StreamingResult, void, unknown> {
   const url = `${API_BASE}/verify/stream`;
+
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 min timeout
+
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, 300000);
 
   try {
     const response = await fetch(url, {
@@ -142,7 +166,9 @@ export async function streamVerify(
       headers: {
         "Content-Type": "application/json",
         ...(useStore.getState().authToken
-          ? { Authorization: `Bearer ${useStore.getState().authToken}` }
+          ? {
+            Authorization: `Bearer ${useStore.getState().authToken}`,
+          }
           : {}),
       },
       body: JSON.stringify(data),
@@ -151,53 +177,93 @@ export async function streamVerify(
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error(err.detail || `Stream failed: ${response.status}`);
+
+      throw new Error(
+        err.detail || `Stream failed: ${response.status}`
+      );
     }
 
-    const reader = response.body!.getReader();
+    if (!response.body) {
+      throw new Error("Streaming response body is unavailable");
+    }
+
+    const reader = response.body.getReader();
     const decoder = new TextDecoder();
+
     let buffer = "";
 
     while (true) {
       const { value, done } = await reader.read();
-      if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
+      if (done) {
+        break;
+      }
 
-      // SSE messages are newline-delimited
-      while (buffer.includes("data: ")) {
-        const idx = buffer.indexOf("data: ");
-        const message = buffer.substring(idx + 6);
-        buffer = buffer.substring(0, idx);
+      buffer += decoder.decode(value, {
+        stream: true,
+      });
 
-        // Skip empty lines / comments
-        if (!message.trim() || message.startsWith(":")) continue;
+      const events = buffer.split("\n\n");
 
-        try {
-          const parsed = JSON.parse(message) as StreamingResult;
-          if (parsed.claim) {
-            yield parsed;
+      buffer = events.pop() || "";
+
+      for (const event of events) {
+        const lines = event.split("\n");
+
+        for (const line of lines) {
+          if (!line.startsWith("data:")) {
+            continue;
           }
-        } catch (e) {
-          console.warn("Failed to parse SSE message:", e, "raw:", message);
+
+          const message = line.substring(5).trim();
+
+          if (!message || message.startsWith(":")) {
+            continue;
+          }
+
+          try {
+            const parsed = JSON.parse(
+              message
+            ) as StreamingResult;
+
+            if (parsed.claim) {
+              yield parsed;
+            }
+          } catch (error) {
+            console.warn(
+              "Failed to parse SSE message:",
+              error,
+              "raw:",
+              message
+            );
+          }
         }
       }
     }
-  } catch (e: any) {
-    if (e.name !== "AbortError") {
-      console.error("Stream verification error:", e);
+  } catch (error: unknown) {
+    if (
+      error instanceof Error &&
+      error.name !== "AbortError"
+    ) {
+      console.error(
+        "Stream verification error:",
+        error
+      );
     }
-    // Yield error result
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Stream verification failed";
+
     yield {
       claim: "",
       verdict: "UNVERIFIABLE",
       confidence: 0,
       evidence: "",
-      explanation: e?.message || "Stream verification failed",
-    } as StreamingResult;
+      explanation: message,
+    };
   } finally {
     clearTimeout(timeoutId);
   }
 }
-
-export { streamVerify };

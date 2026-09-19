@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { streamVerify, StreamingResult } from "@/lib/api";
+import { useStore } from "@/lib/store";
 
 /**
  * Hook for streaming verification results via SSE.

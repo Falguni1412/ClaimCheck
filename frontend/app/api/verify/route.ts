@@ -1,13 +1,7 @@
 import { NextResponse } from "next/server";
 import { verifyClaims } from "@/lib/api";
 
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: "50mb",
-    },
-  },
-};
+export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {

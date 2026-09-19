@@ -2,6 +2,13 @@ fastapi
 uvicorn[standard]
 pydantic
 pydantic-settings
-python-dotenv
-requests
 python-jose
+passlib
+bcrypt
+prometheus-client
+sqlalchemy
+aiosqlite
+slowapi
+numpy
+torch
+transformers

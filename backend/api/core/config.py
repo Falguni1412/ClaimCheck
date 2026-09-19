@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     rate_limit_enterprise: str = "2000/minute"
 
     # Models
-    nli_model_name: str = "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli"
+    nli_model_name: str = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
     nli_model_secondary: str = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"

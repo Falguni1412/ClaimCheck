@@ -62,7 +62,7 @@ class NLIVerifier:
         self.device = device
 
         self.model_name = model_name or settings.nli_model_name
-        self.secondary_model_name = secondary_model_name or settings.nli_model_name_secondary
+        self.secondary_model_name = secondary_model_name or settings.nli_model_secondary
         self.use_ensemble = (
             use_ensemble if use_ensemble is not None else settings.use_ensemble
         )

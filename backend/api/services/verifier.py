@@ -254,7 +254,8 @@ class NLIVerifier:
         if hasattr(mdl.config, "id2label"):
             label_map = {int(k): v.lower() for k, v in mdl.config.id2label.items()}
         else:
-            label_map = {0: "entailment", 1: "neutral", 2: "contradiction"}
+            #label_map = {0: "entailment", 1: "neutral", 2: "contradiction"}
+            label_map = {0: "contradiction", 1: "entailment", 2: "neutral"}
 
         # Build scores dict
         scores = {"supported": 0.0, "unverifiable": 0.0, "contradicted": 0.0}

@@ -5,12 +5,49 @@
 :root {
   --claim-500: #7b2cbf;
   --claim-600: #5a24a0;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 body {
   background: #0a0a0f;
   color: #ffffff;
   line-height: 1.6;
+  font-feature-settings: "liga" 1, "calt" 1;
+}
+
+/* Top progress bar during loading */
+.progress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #7b2cbf, #5a24a0);
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform 0.3s ease-out;
+  z-index: 60;
+}
+.progress-bar.active {
+  animation: progress-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes progress-indeterminate {
+  0% { transform: scaleX(0.15) translateX(0); }
+  20% { transform: scaleX(0.45) translateX(0); }
+  40% { transform: scaleX(0.35) translateX(50px); }
+  60% { transform: scaleX(0.55) translateX(100px); }
+  80% { transform: scaleX(0.4) translateX(200px); }
+  100% { transform: scaleX(0.25) translateX(300px); }
+}
+
+/* Smooth entrance for results */
+.results-enter {
+  opacity: 0;
+  transform: translateY(12px);
+}
+.results-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 300ms ease, transform 300ms ease;
 }
 
 .claim-card {

@@ -12,9 +12,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from ..core.config import settings
 from ..models.database import Webhook, get_db_session
-from ..models.schemas import WebhookCreateRequest, WebhookResponse, Verification
+from ..models.schemas import WebhookCreateRequest, WebhookResponse
 
 logger = logging.getLogger(__name__)
 

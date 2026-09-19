@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     use_cross_encoder_rerank: bool = True
     device: Optional[str] = None  # auto-detect cuda/cpu
-    model_quantization: bool = False  # Use INT8 quantization for CPU inference
+    model_quantization: bool = True  # Use INT8 quantization for CPU inference
     use_ensemble: bool = False  # single model by default for faster local runs
 
     # Verification defaults

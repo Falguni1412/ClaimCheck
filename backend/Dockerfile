@@ -1,4 +1,3 @@
-
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -21,7 +20,8 @@ RUN pip install --upgrade pip && \
 
 COPY . .
 
-RUN useradd --create-home --shell /bin/bash appuser && \
+RUN mkdir -p /tmp/huggingface && \
+    useradd --create-home --shell /bin/bash appuser && \
     chown -R appuser:appuser /app /tmp/huggingface
 
 USER appuser

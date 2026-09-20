@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.config import settings
+from ..core.metrics import WEBHOOK_DELIVERIES
 from ..models.database import Webhook, get_db_session
 from ..models.schemas import WebhookCreateRequest, WebhookResponse
 
@@ -96,16 +97,21 @@ async def deliver_webhook(
         try:
             response = await client.post(
                 webhook_url,
-                data=body,
+                content=body,  # httpx rejects bytes passed as `data=`
                 headers={
                     "Content-Type": "application/json",
                     "X-Webhook-Signature": signature,
                     "X-Webhook-Event": event_type,
-                    "User-Agent": "ClaimCheck/1.0",
+                    "User-Agent": f"ClaimCheck/{settings.app_version}",
                 },
             )
-            if response.status_code >= 200 and response.status_code < 300:
+            if 200 <= response.status_code < 300:
+                WEBHOOK_DELIVERIES.labels(event_type=event_type, status="success").inc()
                 return True
+            logger.warning(
+                "Webhook %s returned HTTP %s", webhook_url, response.status_code
+            )
         except Exception as e:
-            logger.warning(f"Webhook delivery failed: {e}")
+            logger.warning("Webhook delivery failed: %s", e)
+    WEBHOOK_DELIVERIES.labels(event_type=event_type, status="failure").inc()
     return False

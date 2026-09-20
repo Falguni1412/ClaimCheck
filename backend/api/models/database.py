@@ -93,7 +93,11 @@ class Webhook(Base):
     __tablename__ = "webhooks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    # Nullable: POST /webhooks/ is usable without auth wired up, and a NOT NULL
+    # user_id turned every unauthenticated registration into a 500.
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
     url: Mapped[str] = mapped_column(String(500), nullable=False)
     secret: Mapped[str] = mapped_column(String(100), nullable=False)
     # Used to sign webhook payloads

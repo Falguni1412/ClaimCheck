@@ -10,8 +10,8 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models.database import User, APIKey, get_db_session
-from ..models.schemas import UserResponse, APIKeyCreateRequest, APIKeyResponse
+from ..models.database import APIKey, User, Verification, get_db_session  # Verification was missing -> NameError in /admin/stats
+from ..models.schemas import APIKeyCreateRequest, APIKeyResponse, UserRegisterRequest, UserResponse
 from ..core.config import settings
 from ..core.security import hash_password, verify_password, create_access_token, create_refresh_token, generate_api_key, hash_api_key
 from ..utils.exceptions import AuthenticationException, InvalidRequestException, NotFoundException
@@ -66,19 +66,28 @@ async def login(payload: LoginRequest, session: AsyncSession = Depends(get_db_se
 
 
 @router.post("/register", response_model=UserResponse)
-async def register(payload: dict, session: AsyncSession = Depends(get_db_session)):
-    """Create a new user account."""
-    # Check existing
+async def register(
+    payload: UserRegisterRequest,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    Create a new user account.
+
+    Previously accepted a raw dict and raised a bare KeyError (500) when a field
+    was missing; it is now validated, so a bad body returns 422 with the field.
+    """
     existing = await session.execute(
-        select(User).where(User.email == payload.get("email"))
+        select(User).where(
+            (User.email == payload.email) | (User.username == payload.username)
+        )
     )
     if existing.scalar_one_or_none():
-        raise InvalidRequestException("Email already registered")
+        raise InvalidRequestException("Email or username already registered")
 
-    hashed_pw = hash_password(payload["password"])
+    hashed_pw = hash_password(payload.password)
     new_user = User(
-        email=payload["email"],
-        username=payload["username"],
+        email=payload.email,
+        username=payload.username,
         hashed_password=hashed_pw,
         role="user",
         tier="free",
@@ -127,28 +136,33 @@ async def create_api_key(
     )
 
 
-@router.get("/stats")
-async def get_admin_stats(
-    session: AsyncSession = Depends(get_db_session),
-):
-    """Get system-wide statistics."""
-    # Total verifications
-    total_query = select(func.count()).select_from(Verification)
-    total = await session.scalar(total_query) or 0
+@router.get("/stats", summary="System-wide verification statistics")
+async def get_admin_stats(session: AsyncSession = Depends(get_db_session)):
+    """Aggregate counters across all stored verifications."""
+    total = await session.scalar(select(func.count()).select_from(Verification)) or 0
+    avg_risk = await session.scalar(select(func.avg(Verification.risk_score))) or 0.0
+    avg_latency_ms = await session.scalar(
+        select(func.avg(Verification.processing_time_ms))
+    ) or 0.0
 
-    # Average risk score
-    avg_query = select(func.avg(Verification.risk_score)).select_from(Verification)
-    avg_risk = await session.scalar(avg_query) or 0.0
+    # Claim-level totals come from the stored summary blobs.
+    claims = supported = contradicted = unverifiable = 0
+    rows = await session.execute(select(Verification.summary).limit(5000))
+    for (summary,) in rows:
+        if isinstance(summary, dict):
+            claims += int(summary.get("total_claims") or 0)
+            supported += int(summary.get("supported") or 0)
+            contradicted += int(summary.get("contradicted") or 0)
+            unverifiable += int(summary.get("unverifiable") or 0)
 
-    # Count by verdict
-    verdict_query = select(Verification.summary)
-    # Simplified count
     return {
         "total_verifications": total,
-        "average_risk_score": round(avg_risk, 3),
-        "total_claims": total,  # Placeholder
-        "cache_hit_rate": 0.0,  # Would come from cache metrics
-        "uptime_seconds": 0,  # Would track startup time
+        "average_risk_score": round(float(avg_risk), 3),
+        "average_latency_ms": round(float(avg_latency_ms), 1),
+        "total_claims": claims,
+        "supported": supported,
+        "contradicted": contradicted,
+        "unverifiable": unverifiable,
         "environment": settings.environment,
         "app_version": settings.app_version,
     }

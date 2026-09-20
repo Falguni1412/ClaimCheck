@@ -1,0 +1,11 @@
+# Development / CI extras. Install on top of requirements.txt:
+#   pip install -r requirements.txt -r requirements-dev.txt
+pytest==8.3.4
+pytest-asyncio==0.24.0
+anyio==4.6.2.post1
+
+# Optional: spaCy gives better sentence segmentation in the decomposer.
+# Without it the decomposer falls back to regex splitting, which is why it is
+# NOT in the production requirements — the model download alone exceeds the
+# free-tier build budget.
+#   pip install spacy==3.8.2 && python -m spacy download en_core_web_sm

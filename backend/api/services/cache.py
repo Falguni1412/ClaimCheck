@@ -5,8 +5,9 @@ Caches embeddings, verification results, and token blocklists.
 import json
 import hashlib
 import logging
-from typing import Any, Optional, Dict
-from datetime import datetime, timedelta
+from collections import OrderedDict
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional
 
 try:
     import redis.asyncio as redis_async
@@ -23,32 +24,34 @@ logger = logging.getLogger(__name__)
 class InMemoryCache:
     """Simple in-memory cache with TTL."""
 
-    def __init__(self, max_size: int = 10000):
-        self._cache: Dict[str, tuple[Any, datetime]] = {}
-        self._max_size = max_size
+    def __init__(self, max_size: int = 512):
+        # OrderedDict so eviction is least-recently-used, not insertion order.
+        self._cache: "OrderedDict[str, tuple[Any, datetime]]" = OrderedDict()
+        self._max_size = max(1, max_size)
 
     def get(self, key: str) -> Optional[Any]:
-        if key not in self._cache:
+        entry = self._cache.get(key)
+        if entry is None:
             CACHE_MISSES.labels(cache_type="in_memory").inc()
             return None
 
-        value, expires_at = self._cache[key]
-        if datetime.utcnow() >= expires_at:
-            del self._cache[key]
+        value, expires_at = entry
+        if datetime.now(timezone.utc) >= expires_at:
+            self._cache.pop(key, None)
+            CACHE_SIZE.labels(cache_type="in_memory").set(len(self._cache))
             CACHE_MISSES.labels(cache_type="in_memory").inc()
             return None
 
+        self._cache.move_to_end(key)
         CACHE_HITS.labels(cache_type="in_memory").inc()
         return value
 
     def set(self, key: str, value: Any, ttl_seconds: int = 3600) -> None:
-        # Evict oldest if over capacity
-        if len(self._cache) >= self._max_size:
-            oldest_key = next(iter(self._cache))
-            del self._cache[oldest_key]
-
-        expires_at = datetime.utcnow() + timedelta(seconds=ttl_seconds)
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
         self._cache[key] = (value, expires_at)
+        self._cache.move_to_end(key)
+        while len(self._cache) > self._max_size:
+            self._cache.popitem(last=False)
         CACHE_SIZE.labels(cache_type="in_memory").set(len(self._cache))
 
     def delete(self, key: str) -> None:
@@ -75,7 +78,9 @@ class CacheService:
 
     async def connect(self) -> None:
         """Connect to Redis if available; otherwise use in-memory."""
-        if not REDIS_AVAILABLE:
+        if self._use_redis and self._redis is not None:
+            return  # already connected; connect() is called from several places
+        if not REDIS_AVAILABLE or not settings.redis_url.startswith(("redis://", "rediss://")):
             logger.warning("redis package not installed, using in-memory cache only")
             return
 
@@ -97,7 +102,15 @@ class CacheService:
 
     async def close(self) -> None:
         if self._redis:
-            await self._redis.close()
+            try:
+                await self._redis.aclose()
+            except AttributeError:  # redis < 5.0.1
+                await self._redis.close()
+            except Exception as e:
+                logger.debug("Redis close failed: %s", e)
+            finally:
+                self._redis = None
+                self._use_redis = False
 
     @staticmethod
     def make_key(namespace: str, *parts: Any) -> str:

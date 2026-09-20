@@ -3,7 +3,7 @@ Pydantic schemas for request/response validation.
 """
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Literal
-from pydantic import BaseModel, Field, EmailStr, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 # ============== Auth Schemas ==============
@@ -63,22 +63,66 @@ class APIKeyResponse(BaseModel):
 # ============== Verification Schemas ==============
 
 class VerifyRequest(BaseModel):
-    answer: str = Field(..., min_length=1, max_length=50_000)
-    sources: List[str] = Field(..., min_length=1, max_length=50)
-    use_chunking: bool = Field(default=True)
-    top_k: int = Field(default=3, ge=1, le=10)
-    tags: Optional[List[str]] = Field(default=None, max_length=10)
-    options: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    """An LLM answer plus the source documents it should be checked against."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "answer": "Metformin should be taken on an empty stomach.",
+                "sources": [
+                    "Take metformin with meals to reduce stomach upset. "
+                    "Do not take it on an empty stomach."
+                ],
+                "top_k": 3,
+            }
+        }
+    )
+
+    answer: str = Field(
+        ..., min_length=1, max_length=50_000,
+        description="The LLM-generated text to verify.",
+    )
+    sources: List[str] = Field(
+        ..., min_length=1, max_length=50,
+        description="Ground-truth documents. Each is capped at 100,000 characters.",
+    )
+    use_chunking: bool = Field(
+        default=True,
+        description="Split long sources into passages before retrieval. Leave on unless sources are already short.",
+    )
+    top_k: int = Field(default=3, ge=1, le=10, description="Passages retrieved per claim.")
+    tags: Optional[List[str]] = Field(default=None, max_length=10, description="Free-form labels stored with the result.")
+    options: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Reserved for forward-compatible flags.")
+
+    @field_validator("answer")
+    @classmethod
+    def validate_answer(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("answer cannot be blank")
+        return v
 
     @field_validator("sources")
     @classmethod
     def validate_sources(cls, v: List[str]) -> List[str]:
+        cleaned: List[str] = []
         for i, s in enumerate(v):
             if not s or not s.strip():
                 raise ValueError(f"Source {i} is empty")
             if len(s) > 100_000:
                 raise ValueError(f"Source {i} exceeds 100,000 character limit")
-        return v
+            cleaned.append(s)
+        return cleaned
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return None
+        tags = [t.strip() for t in v if t and t.strip()]
+        for t in tags:
+            if len(t) > 64:
+                raise ValueError("Each tag must be 64 characters or fewer")
+        return tags or None
 
 
 class VerdictScores(BaseModel):
@@ -125,12 +169,20 @@ class BatchVerifyRequest(BaseModel):
     fail_fast: bool = Field(default=False)
 
 
+class BatchItemError(BaseModel):
+    index: int
+    error: str
+
+
 class BatchVerifyResponse(BaseModel):
     results: List[VerifyResponse]
     total: int
     successful: int
     failed: int
     total_processing_time_seconds: float
+    errors: Optional[List[BatchItemError]] = Field(
+        default=None, description="Per-item failures when fail_fast is false."
+    )
 
 
 # ============== Webhook Schemas ==============
@@ -174,19 +226,45 @@ class VerificationHistoryList(BaseModel):
 
 class VerificationDetail(VerifyResponse):
     id: int
-    user_id: Optional[int]
+    user_id: Optional[int] = None
     tags: Optional[List[str]] = None
+    created_at: Optional[datetime] = None
 
 
 # ============== Health / Stats ==============
 
 class HealthResponse(BaseModel):
+    """Liveness: the process is up and serving. Cheap, never touches the model."""
     status: str
+    version: str
+    timestamp: str
+
+
+class ReadinessResponse(BaseModel):
+    """Readiness: the process can actually serve a verification right now."""
+    status: str
+    ready: bool
     model_loaded: bool
     version: str
     timestamp: str
+    uptime_seconds: float
     database: bool
     cache: bool
+    retrieval: Dict[str, bool] = Field(default_factory=dict)
+
+
+class ErrorDetail(BaseModel):
+    code: str
+    message: str
+    extra: Optional[Dict[str, Any]] = None
+
+
+class ErrorResponse(BaseModel):
+    """Every non-2xx response from this API has this shape."""
+    error: ErrorDetail
+    detail: str = Field(description="Mirror of error.message, for older clients.")
+    path: str
+    request_id: Optional[str] = None
 
 
 class StatsResponse(BaseModel):

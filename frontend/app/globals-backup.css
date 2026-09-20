@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --claim-500: #7b2cbf;
+  --claim-600: #5a24a0;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body {
+  background: #0a0a0f;
+  color: #ffffff;
+  line-height: 1.6;
+  font-feature-settings: "liga" 1, "calt" 1;
+}
+
+/* Top progress bar during loading */
+.progress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #7b2cbf, #5a24a0);
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform 0.3s ease-out;
+  z-index: 60;
+}
+.progress-bar.active {
+  animation: progress-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes progress-indeterminate {
+  0% { transform: scaleX(0.15) translateX(0); }
+  20% { transform: scaleX(0.45) translateX(0); }
+  40% { transform: scaleX(0.35) translateX(50px); }
+  60% { transform: scaleX(0.55) translateX(100px); }
+  80% { transform: scaleX(0.4) translateX(200px); }
+  100% { transform: scaleX(0.25) translateX(300px); }
+}
+
+/* Smooth entrance for results */
+.results-enter {
+  opacity: 0;
+  transform: translateY(12px);
+}
+.results-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 300ms ease, transform 300ms ease;
+}
+
+.claim-card {
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 12px;
+  border-left: 4px solid;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.claim-card.supported { border-color: #4caf50; }
+.claim-card.contradicted { border-color: #f44336; background: rgba(244, 67, 54, 0.05); }
+.claim-card.unverifiable { border-color: #ffc107; }
+
+.verdict-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.verdict-badge.supported { background: rgba(76, 175, 80, 0.2); color: #4caf50; }
+.verdict-badge.contradicted { background: rgba(244, 67, 54, 0.2); color: #f44336; }
+.verdict-badge.unverifiable { background: rgba(255, 193, 7, 0.2); color: #ffc107; }
+
+.stat-card {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+}
+.stat-card .number { font-size: 28px; font-weight: 700; }
+.stat-card .label { font-size: 12px; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 1px; }
+.stat-card.risk .number { color: #f44336; }
+.stat-card.supported .number { color: #4caf50; }
+.stat-card.contradicted .number { color: #f44336; }
+.stat-card.unverifiable .number { color: #ffc107; }

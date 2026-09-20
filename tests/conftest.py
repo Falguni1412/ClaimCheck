@@ -4,6 +4,7 @@ Shared test fixtures for ClaimCheck tests.
 import asyncio
 import os
 import sys
+import tempfile
 import pytest
 from pathlib import Path
 
@@ -17,8 +18,14 @@ def setup_test_env():
     """Configure environment variables for tests."""
     os.environ.setdefault("ENVIRONMENT", "test")
     os.environ.setdefault("JWT_SECRET", "test-secret-key-for-testing")
-    os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    # NOT ":memory:" — each aiosqlite connection would get its own blank DB,
+    # so tables created by init_db() disappear before the first query.
+    _db = Path(tempfile.gettempdir()) / "claimcheck_test.db"
+    _db.unlink(missing_ok=True)
+    os.environ.setdefault("DATABASE_URL", f"sqlite+aiosqlite:///{_db}")
     os.environ.setdefault("REDIS_URL", "memory://")
+    os.environ.setdefault("ENABLE_SEMANTIC_RETRIEVAL", "false")
+    os.environ.setdefault("MODEL_WARMUP", "false")
     os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
     os.environ.setdefault("LOG_LEVEL", "WARNING")
     yield

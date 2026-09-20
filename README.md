@@ -45,7 +45,7 @@ Then visit:
 cd backend
 pip install -r requirements.txt
 python -m spacy download en_core_web_sm  # Download NLP model
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000   # run from backend/
 
 # Frontend
 cd frontend
@@ -311,7 +311,9 @@ kubectl port-forward svc/claimcheck-backend-svc 8000:8000
 
 - **Metrics**: `http://localhost:8000/metrics`
 - **Grafana**: `http://localhost:3001` (admin/admin)
-- **Health**: `http://localhost:8000/api/health`
+- **Health (liveness)**: `http://localhost:8000/health`
+- **Readiness (model loaded?)**: `http://localhost:8000/ready`
+- **Full API reference**: [`backend/API.md`](backend/API.md), plus `/docs` and `/redoc`
 - **Logs**: Check container logs or centralized logging system
 
 ## Scaling
@@ -446,7 +448,7 @@ If you use ClaimCheck in your research or project, please cite:
 3. **Run the backend**
    ```bash
    cd backend
-   uvicorn main:app --reload --host 0.0.0.0 --port 8000
+   uvicorn api.main:app --reload --host 0.0.0.0 --port 8000   # run from backend/
    ```
 
 4. **Run the frontend**
@@ -459,7 +461,7 @@ If you use ClaimCheck in your research or project, please cite:
 5. **Visit the app**
    - Frontend: `http://localhost:3000`
    - API: `http://localhost:8000`
-   - Health check: `http://localhost:8000/api/health`
+   - Health check: `http://localhost:8000/health` (readiness: `/ready`)
 
 ## Advanced Usage
 
@@ -551,7 +553,7 @@ export DEBUG=true
 Run with debug:
 ```bash
 cd backend
-uvicorn main:app --reload --host 0.0.0.0 --port 8000 --log-level debug
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000 --log-level debug   # run from backend/
 ```
 
 ## Environment Variables
@@ -710,7 +712,7 @@ python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
-pip install -r requirements.txt
+pip install -r backend/requirements.txt   # CPU-only torch; see backend/API.md
 
 # Download spaCy model
 python -m spacy download en_core_web_sm
@@ -720,7 +722,7 @@ python -m spacy download en_core_web_sm
 
 ```bash
 cd backend
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000   # run from backend/
 ```
 
 The API will be available at `http://localhost:8000`

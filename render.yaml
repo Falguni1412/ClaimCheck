@@ -1,22 +1,60 @@
 services:
-  # Backend FastAPI Service (Free Tier)
+  # ── Backend FastAPI service (free tier: 512MB RAM, ephemeral disk) ──
   - type: web
     name: claimcheck-backend
     env: python
     region: oregon
     plan: free
     rootDir: backend
-    buildCommand: pip install -r requirements.txt && python -m spacy download en_core_web_sm
-    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    # rootDir is `backend`, so this installs backend/requirements.txt.
+    # The previous build ran `python -m spacy download en_core_web_sm` while
+    # spaCy was not in that file — the build failed there every time. spaCy is
+    # optional (the decomposer falls back to regex sentence splitting).
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    # One worker only. Each worker loads its own copy of the model; two workers
+    # on a 512MB instance is a guaranteed OOM kill.
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 65
+    healthCheckPath: /health
     envVars:
       - key: ENVIRONMENT
         value: production
-      - key: MODEL_QUANTIZATION
-        value: "true"
       - key: LOG_LEVEL
         value: INFO
+      - key: MODEL_QUANTIZATION
+        value: "true"
+      # Fractional vCPU: extra threads cause contention, not speedup.
+      - key: TORCH_NUM_THREADS
+        value: "1"
+      - key: MAX_CONCURRENT_INFERENCES
+        value: "1"
+      - key: NLI_MAX_LENGTH
+        value: "256"
+      # BM25-only retrieval. Turning this on loads a second model (~130MB) and
+      # is the difference between fitting in 512MB and being OOM-killed.
+      # Flip to "true" on a paid instance for better paraphrase matching.
+      - key: ENABLE_SEMANTIC_RETRIEVAL
+        value: "false"
+      - key: USE_ENSEMBLE
+        value: "false"
+      - key: USE_CROSS_ENCODER_RERANK
+        value: "false"
+      # Keep HuggingFace caches on the writable disk.
+      - key: HF_HOME
+        value: /tmp/hf
+      - key: TRANSFORMERS_NO_ADVISORY_WARNINGS
+        value: "1"
+      # Comma-separated. Replace with your deployed frontend origin.
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: JWT_SECRET
+        generateValue: true
+      # NOTE: free-tier disk is ephemeral, so this SQLite file (and all
+      # /history rows) is wiped on every deploy and every cold start. Point
+      # DATABASE_URL at a managed Postgres to keep history.
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:////tmp/claimcheck.db
 
-  # Frontend Next.js Service (Free Tier)
+  # ── Frontend Next.js service ──
   - type: web
     name: claimcheck-frontend
     env: node

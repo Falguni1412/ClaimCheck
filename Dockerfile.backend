@@ -2,34 +2,48 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install system deps for ML stack
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps
-COPY requirements.txt .
+# Install from the backend requirements (CPU-only torch).
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # ── Runtime ──────────────────────────────────────────
 FROM python:3.11-slim
 
+# libgomp is needed at *runtime* by torch, not at build time — it was installed
+# in the builder stage only, so the previous image failed on import torch.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 claimcheck
+
 WORKDIR /app
 
-# Copy installed packages from builder
-COPY --from=builder /root/.local /root/.local
-ENV PATH=/root/.local/bin:$PATH
+COPY --from=builder /root/.local /home/claimcheck/.local
+COPY backend/ /app/
 
-# Copy app code
-COPY backend/ ./backend/
-COPY requirements.txt .
+ENV PATH=/home/claimcheck/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HF_HOME=/home/claimcheck/.cache/huggingface \
+    TORCH_NUM_THREADS=1 \
+    MAX_CONCURRENT_INFERENCES=1
 
-# Download spaCy model (minimal)
-RUN python -m spacy download en_core_web_sm || true
+RUN chown -R claimcheck:claimcheck /app /home/claimcheck
+USER claimcheck
 
 EXPOSE 8000
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD curl -f http://localhost:8000/ || exit 1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# curl is not installed in python:3.11-slim, so the old healthcheck always
+# failed. Use the interpreter that is definitely present, and probe /health
+# (liveness) rather than / so a cold start is not reported as unhealthy.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status==200 else 1)"
+
+# WORKDIR is /app and the app package lives at /app/api, so the import path is
+# `api.main:app`. The old `main:app` with code under /app/backend could not
+# resolve and the container exited immediately.
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

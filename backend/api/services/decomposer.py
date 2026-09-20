@@ -49,7 +49,7 @@ class Claim:
 # Patterns for splitting compound sentences on coordinating conjunctions
 COMPOUND_SPLIT_PATTERNS = [
     (r",\s+and\s+(?=(?:it|this|that|they|he|she|the|these|those|metformin|patients?|users?|you|we|i|also|can|may|will|should|must|is|are|was|were)\b)", re.IGNORECASE),
-    (r"\s+and\s+(?=(?:can|may|will|should|must|is|are|was|were|has|have|had)\b)", re.IGNORECASE),
+    (r"\s+and\s+(?=(?:it|this|that|they|he|she|the|these|those|can|may|will|should|must|is|are|was|were|has|have|had|reduces?|increases?|decreases?|causes?|leads?)\b)", re.IGNORECASE),
     (r",\s+(?:but|however|although|though|yet|whereas)\s+", re.IGNORECASE),
     (r";\s+(?=(?:it|this|that|they|he|she|the|these|those|metformin|patients?|users?|you|we|i)\b)", re.IGNORECASE),
     (r",\s+(?:additionally|moreover|furthermore|also)\s+", re.IGNORECASE),
@@ -218,14 +218,19 @@ def decompose_into_claims(text: str, min_claim_length: int = 15) -> List[Claim]:
     nlp = _get_nlp() if SPACY_AVAILABLE else None
     if nlp:
         sentences = [sent.text.strip() for sent in nlp(text).sents if sent.text.strip()]
+        regex_sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+        if len(regex_sentences) > len(sentences):
+            sentences = regex_sentences
     else:
         sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
 
     raw_claims: List[str] = []
     for sentence in sentences:
         sentence = strip_hedges(sentence)
-        if len(sentence) < min_claim_length:
-            continue
+        if len(sentence.strip().rstrip('.!?')) < 15:
+            words = sentence.strip().rstrip('.!?').split()
+            if len(words) < 3:
+                continue
 
         # Preserve conditionals as single claims
         if is_conditional(sentence):
@@ -252,8 +257,10 @@ def decompose_into_claims(text: str, min_claim_length: int = 15) -> List[Claim]:
             ).strip()
             sub = re.sub(r"^[,\s]+", "", sub).strip()
             sub = strip_hedges(sub)
-            if len(sub) < min_claim_length:
-                continue
+            if len(sub.strip().rstrip('.!?')) < 15:
+                words = sub.strip().rstrip('.!?').split()
+                if len(words) < 3:
+                    continue
             if not sub.endswith((".", "!", "?")):
                 sub += "."
             raw_claims.append(sub)
@@ -319,22 +326,21 @@ def _split_compound_sentence(sentence: str) -> List[str]:
 def extract_named_entities(text: str) -> dict:
     """Extract named entities (kept for backward compatibility)."""
     nlp = _get_nlp() if SPACY_AVAILABLE else None
-    if not nlp:
-        return {"dates": [], "numbers": [], "names": [], "organizations": [], "locations": []}
-
-    doc = nlp(text)
     entities = {"dates": [], "numbers": [], "names": [], "organizations": [], "locations": []}
-    for ent in doc.ents:
-        if ent.label_ == "DATE":
-            entities["dates"].append(ent.text)
-        elif ent.label_ == "PERSON":
-            entities["names"].append(ent.text)
-        elif ent.label_ == "ORG":
-            entities["organizations"].append(ent.text)
-        elif ent.label_ == "GPE":
-            entities["locations"].append(ent.text)
+
+    if nlp:
+        doc = nlp(text)
+        for ent in doc.ents:
+            if ent.label_ == "DATE":
+                entities["dates"].append(ent.text)
+            elif ent.label_ == "PERSON":
+                entities["names"].append(ent.text)
+            elif ent.label_ == "ORG":
+                entities["organizations"].append(ent.text)
+            elif ent.label_ == "GPE":
+                entities["locations"].append(ent.text)
     numbers = re.findall(
-        r"\b\d+(?:\.\d+)?(?:%|percent|million|billion|thousand)?\b",
+        r"(?<!\w)(\d+(?:,\d{3})*(?:\.\d+)?)(?:%|percent|million|billion|thousand)?(?!\w)",
         text,
         re.IGNORECASE,
     )

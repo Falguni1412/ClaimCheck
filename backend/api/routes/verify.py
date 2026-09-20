@@ -138,16 +138,20 @@ def _summarise(results: List[Dict[str, Any]], elapsed: float) -> Tuple[Verificat
     return summary, risk_score
 
 
-def _retrieve_all(chunks: List[str], claim_texts: List[str], top_k: int) -> List[str]:
-    """Blocking retrieval for every claim. Runs in a worker thread."""
+def _retrieve_all(chunks: List[str], claim_texts: List[str], top_k: int) -> List[List[str]]:
+    """
+    Blocking retrieval for every claim. Runs in a worker thread.
+
+    Returns the full top-k passage list per claim, not just the single best
+    one. The verifier scores the claim against each of them (and their
+    sentences), so a contradiction in the second-ranked passage is no longer
+    invisible.
+    """
     retriever = get_retriever(chunks)
-    evidence: List[str] = []
-    for text in claim_texts:
-        passages = retriever.retrieve(
-            text, top_k=top_k, rerank=settings.use_cross_encoder_rerank
-        )
-        evidence.append(passages[0] if passages else "")
-    return evidence
+    return [
+        retriever.retrieve(text, top_k=top_k, rerank=settings.use_cross_encoder_rerank)
+        for text in claim_texts
+    ]
 
 
 async def _persist_verification(
@@ -252,25 +256,27 @@ async def run_verification(
     # Retrieval and inference are both CPU-bound; hold the semaphore across
     # both so total resident model work stays bounded.
     async with _semaphore():
-        evidence = await loop.run_in_executor(
+        passages_per_claim = await loop.run_in_executor(
             None, _retrieve_all, chunks, claim_texts, request.top_k
         )
-        verifications = await verifier.verify_pairs_async(
-            list(zip(claim_texts, evidence)), True
+        verifications = await verifier.verify_claims_async(
+            list(zip(claim_texts, passages_per_claim)), True
         )
 
     results: List[Dict[str, Any]] = []
-    for claim_text, best_evidence, verification in zip(claim_texts, evidence, verifications):
-        if not best_evidence:
+    for claim_text, passages, verification in zip(claim_texts, passages_per_claim, verifications):
+        if not passages:
             results.append(_empty_claim_result(claim_text))
             CLAIMS_VERIFIED.labels(verdict="UNVERIFIABLE").inc()
             continue
         results.append(
             {
                 "claim": claim_text,
+                # The premise the verdict was actually based on, which may be a
+                # single sentence out of the retrieved passage.
+                "evidence": verification.get("evidence") or passages[0],
                 "verdict": verification["verdict"],
                 "confidence": verification["confidence"],
-                "evidence": best_evidence,
                 "verdict_scores": verification["scores"],
                 "numerical_check": verification.get("numerical_check"),
                 "explanation": verification.get("explanation"),
@@ -408,17 +414,17 @@ async def verify_stream(request: VerifyRequest):
         """Yield one verification result per claim, off the event loop."""
         loop = asyncio.get_running_loop()
         async with _semaphore():
-            evidence = await loop.run_in_executor(
+            passages_per_claim = await loop.run_in_executor(
                 None, _retrieve_all, chunks, claim_texts, request.top_k
             )
-            for claim_text, best_evidence in zip(claim_texts, evidence):
-                if not best_evidence:
+            for claim_text, passages in zip(claim_texts, passages_per_claim):
+                if not passages:
                     yield _empty_claim_result(claim_text)
                     continue
-                scored = await verifier.verify_pairs_async([(claim_text, best_evidence)])
+                scored = await verifier.verify_claims_async([(claim_text, passages)])
                 result = dict(scored[0])
                 result["claim"] = claim_text
-                result["evidence"] = best_evidence
+                result["evidence"] = result.get("evidence") or passages[0]
                 result["verdict_scores"] = result.pop("scores", None)
                 yield result
 

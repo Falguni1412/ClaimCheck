@@ -25,11 +25,14 @@ class StubVerifier:
     use_ensemble = False
     secondary_model = None
 
-    def verify_pairs(
-        self, pairs: Sequence[Tuple[str, str]], run_numerical_check: bool = True
+    policy = "stub-policy"
+
+    def verify_claims(
+        self, items: Sequence[Tuple[str, Sequence[str]]], run_numerical_check: bool = True
     ) -> List[Dict[str, Any]]:
         results = []
-        for claim, evidence in pairs:
+        for claim, passages in items:
+            evidence = passages[0] if passages else ""
             if not evidence.strip():
                 verdict, scores = "UNVERIFIABLE", {
                     "supported": 0.0, "unverifiable": 1.0, "contradicted": 0.0
@@ -48,8 +51,16 @@ class StubVerifier:
                 "scores": scores,
                 "numerical_check": None,
                 "explanation": f"stubbed {verdict}",
+                "evidence": evidence,
+                "decision_reason": "stub",
             })
         return results
+
+    async def verify_claims_async(self, items, run_numerical_check: bool = True):
+        return self.verify_claims(items, run_numerical_check)
+
+    def verify_pairs(self, pairs, run_numerical_check: bool = True):
+        return self.verify_claims([(c, [e]) for c, e in pairs], run_numerical_check)
 
     async def verify_pairs_async(self, pairs, run_numerical_check: bool = True):
         return self.verify_pairs(pairs, run_numerical_check)
@@ -64,7 +75,7 @@ def client():
 
     from api.models.database import init_db
     from api.routes import verify as verify_module
-    from backend.main import app
+    from api.main import app
 
     asyncio.run(init_db())
     # Bypass model loading; the lifespan is not started by TestClient unless

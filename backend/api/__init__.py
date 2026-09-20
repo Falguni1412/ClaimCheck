@@ -1,1 +1,1 @@
-"""API package initialization."""
+"""Route modules for the API."""

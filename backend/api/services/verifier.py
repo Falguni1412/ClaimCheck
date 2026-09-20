@@ -24,6 +24,15 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from ..core.config import settings
 from ..core.metrics import MODEL_INFERENCE_LATENCY, MODEL_LOADED
+from .decision import (
+    DecisionPolicy,
+    PremiseVerdict,
+    aggregate,
+    category_mismatch_verdict,
+    classify_scores,
+    grounding_gap,
+    split_premises,
+)
 from .numerical import check_numerical_consistency, detect_unit_mismatch
 
 logger = logging.getLogger(__name__)
@@ -55,6 +64,8 @@ class VerificationResult:
     scores: Dict[str, float]
     numerical_check: Optional[Dict[str, Any]] = None
     explanation: Optional[str] = None
+    evidence: str = ""
+    decision_reason: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -63,6 +74,8 @@ class VerificationResult:
             "scores": self.scores,
             "numerical_check": self.numerical_check,
             "explanation": self.explanation,
+            "evidence": self.evidence,
+            "decision_reason": self.decision_reason,
         }
 
 
@@ -146,6 +159,15 @@ class NLIVerifier:
         )
         self.max_length = settings.nli_max_length
         self.batch_size = max(1, settings.nli_batch_size)
+        self.policy = DecisionPolicy(
+            min_entailment=settings.min_entailment,
+            min_contradiction=settings.min_contradiction,
+            margin=settings.decision_margin,
+            require_grounding=settings.require_entity_grounding,
+            max_premise_units=settings.max_premise_units,
+            require_category_consistency=settings.require_category_consistency,
+            category_mismatch_confidence=settings.category_mismatch_confidence,
+        )
 
         # Load primary model
         logger.info("Loading primary NLI model '%s' on %s...", self.model_name, device)
@@ -231,63 +253,111 @@ class NLIVerifier:
         evidence: str,
         run_numerical_check: bool = True,
     ) -> Dict[str, Any]:
-        """Verify a single claim against evidence. Blocking — call via a thread."""
-        return self.verify_pairs([(claim, evidence)], run_numerical_check)[0]
+        """Verify a single claim against one evidence string. Blocking."""
+        return self.verify_claims([(claim, [evidence])], run_numerical_check)[0]
 
     def verify_pairs(
         self,
         pairs: Sequence[Tuple[str, str]],
         run_numerical_check: bool = True,
     ) -> List[Dict[str, Any]]:
-        """
-        Verify many (claim, evidence) pairs in as few forward passes as possible.
+        """Backward-compatible entry point: one evidence string per claim."""
+        return self.verify_claims(
+            [(claim, [evidence]) for claim, evidence in pairs], run_numerical_check
+        )
 
-        Blocking; run it in a worker thread from async code.
+    def verify_claims(
+        self,
+        items: Sequence[Tuple[str, Sequence[str]]],
+        run_numerical_check: bool = True,
+    ) -> List[Dict[str, Any]]:
         """
-        results: List[Optional[Dict[str, Any]]] = [None] * len(pairs)
+        Verify claims against their retrieved passages.
 
-        # Pairs with no evidence never reach the model.
-        scorable: List[Tuple[int, Tuple[str, str]]] = []
-        for i, (claim, evidence) in enumerate(pairs):
-            if not evidence or not evidence.strip():
+        Each claim is scored against several premise units (each retrieved
+        passage, plus its individual sentences). All units across all claims are
+        tokenised together, so the extra premises cost a larger batch rather
+        than more forward passes.
+
+        Blocking; call from a worker thread.
+        """
+        results: List[Optional[Dict[str, Any]]] = [None] * len(items)
+
+        # Build the flat list of (claim, premise) pairs to score.
+        flat_pairs: List[Tuple[str, str]] = []
+        spans: List[Tuple[int, int, int, List[str]]] = []  # index, start, end, premises
+
+        for i, (claim, passages) in enumerate(items):
+            usable = [p for p in passages if p and p.strip()]
+            premises = split_premises(usable, self.policy.max_premise_units)
+            if not premises:
                 results[i] = VerificationResult(
                     verdict="UNVERIFIABLE",
                     confidence=0.0,
                     scores=dict(_EMPTY_SCORES),
                     explanation="No evidence provided",
+                    decision_reason="no evidence retrieved",
                 ).to_dict()
-            else:
-                scorable.append((i, (claim, evidence)))
+                continue
+            start = len(flat_pairs)
+            flat_pairs.extend((claim, premise) for premise in premises)
+            spans.append((i, start, len(flat_pairs), premises))
 
-        if scorable:
-            batch_pairs = [p for _, p in scorable]
-            primary = self._nli_scores_batch(batch_pairs, model="primary")
-
+        if flat_pairs:
+            primary = self._nli_scores_batch(flat_pairs, model="primary")
             secondary = None
             if self.secondary_model is not None:
                 try:
-                    secondary = self._nli_scores_batch(batch_pairs, model="secondary")
+                    secondary = self._nli_scores_batch(flat_pairs, model="secondary")
                 except Exception as e:
                     logger.warning("Secondary model failed, using primary only: %s", e)
 
-            for slot, (idx, (claim, evidence)) in enumerate(scorable):
-                scores = primary[slot]
-                if secondary is not None:
-                    s2 = secondary[slot]
-                    scores = {k: 0.6 * scores[k] + 0.4 * s2[k] for k in scores}
-                results[idx] = self._assemble(claim, evidence, scores, run_numerical_check)
+            for index, start, end, premises in spans:
+                claim = items[index][0]
+                per_premise: List[PremiseVerdict] = []
+                for offset, premise in enumerate(premises):
+                    scores = primary[start + offset]
+                    if secondary is not None:
+                        s2 = secondary[start + offset]
+                        scores = {k: 0.6 * scores[k] + 0.4 * s2[k] for k in scores}
+                    verdict, confidence, reason = classify_scores(scores, self.policy)
+                    per_premise.append(
+                        PremiseVerdict(
+                            premise=premise, verdict=verdict,
+                            confidence=confidence, scores=scores, reason=reason,
+                        )
+                    )
+                results[index] = self._assemble(
+                    claim,
+                    [p for p in items[index][1] if p and p.strip()],
+                    per_premise,
+                    run_numerical_check,
+                )
 
-        return [r for r in results if r is not None]
+        return [r if r is not None else VerificationResult(
+            verdict="UNVERIFIABLE", confidence=0.0, scores=dict(_EMPTY_SCORES),
+            explanation="No evidence provided",
+        ).to_dict() for r in results]
+
+    async def verify_claims_async(
+        self,
+        items: Sequence[Tuple[str, Sequence[str]]],
+        run_numerical_check: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Run ``verify_claims`` off the event loop."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, self.verify_claims, list(items), run_numerical_check
+        )
 
     async def verify_pairs_async(
         self,
         pairs: Sequence[Tuple[str, str]],
         run_numerical_check: bool = True,
     ) -> List[Dict[str, Any]]:
-        """Run ``verify_pairs`` off the event loop so the server stays responsive."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            self._executor, self.verify_pairs, list(pairs), run_numerical_check
+        """Backward-compatible async entry point."""
+        return await self.verify_claims_async(
+            [(claim, [evidence]) for claim, evidence in pairs], run_numerical_check
         )
 
     async def verify_claims_batch(
@@ -362,56 +432,103 @@ class NLIVerifier:
     def _assemble(
         self,
         claim: str,
-        evidence: str,
-        scores: Dict[str, float],
+        passages: Sequence[str],
+        per_premise: List[PremiseVerdict],
         run_numerical_check: bool,
     ) -> Dict[str, Any]:
-        verdict_key = max(scores, key=lambda k: scores[k])
-        verdict_label = {
-            "supported": "SUPPORTED",
-            "unverifiable": "UNVERIFIABLE",
-            "contradicted": "CONTRADICTED",
-        }[verdict_key]
-        confidence = scores[verdict_key]
+        """
+        Turn per-premise NLI verdicts into one answer.
+
+        Order matters:
+          1. categorical check (symbolic, model-independent — see decision.py);
+             injected as an extra premise so it goes through the SAME
+             contradiction-beats-support aggregation as everything else,
+             rather than a bolted-on special case
+          2. aggregate premises (contradiction beats support)
+          3. numerical override (only a real mismatch, never a missing number)
+          4. grounding gate (evidence must mention the claim's entities before
+             it is allowed to *support* the claim)
+        """
+        category_verdict = category_mismatch_verdict(
+            claim, [p.premise for p in per_premise], self.policy
+        )
+        if category_verdict is not None:
+            per_premise = list(per_premise) + [category_verdict]
+
+        best = aggregate(per_premise, self.policy)
+        if best is None:
+            return VerificationResult(
+                verdict="UNVERIFIABLE", confidence=0.0, scores=dict(_EMPTY_SCORES),
+                explanation="No evidence provided",
+            ).to_dict()
+
+        verdict_label = best.verdict
+        confidence = best.confidence
+        scores = dict(best.scores)
+        evidence = best.premise
+        reason = best.reason
+
+        evidence_text = " ".join(passages)
 
         numerical_check = None
         if run_numerical_check:
             try:
-                num_result = check_numerical_consistency(claim, evidence)
-                unit_mismatch = detect_unit_mismatch(claim, evidence)
+                num_result = check_numerical_consistency(claim, evidence_text)
                 numerical_check = {
                     "consistent": num_result.consistent,
+                    "status": num_result.status,
                     "claim_value": num_result.claim_value,
                     "evidence_value": num_result.evidence_value,
                     "ratio": num_result.ratio,
                     "note": num_result.note,
-                    "unit_mismatch": unit_mismatch,
+                    "unit_mismatch": detect_unit_mismatch(claim, evidence_text),
                 }
-                # Hard numeric disagreement overrides a soft NLI verdict.
-                if (
-                    not num_result.consistent
-                    and num_result.claim_value is not None
-                    and num_result.evidence_value is not None
-                    and verdict_label != "CONTRADICTED"
-                ):
+                # Only a genuine value-vs-value mismatch may override the model.
+                # "claim mentions a number the evidence never discusses" is a
+                # failure to verify, not a contradiction.
+                if num_result.status == "mismatch" and verdict_label != "CONTRADICTED":
                     verdict_label = "CONTRADICTED"
                     confidence = max(confidence, num_result.confidence)
                     scores = {
-                        "supported": min(scores["supported"], 0.1),
+                        "supported": min(scores.get("supported", 0.0), 0.1),
                         "unverifiable": 0.1,
-                        "contradicted": max(scores["contradicted"], 0.8),
+                        "contradicted": max(scores.get("contradicted", 0.0), 0.8),
                     }
+                    reason = f"numerical mismatch overrode NLI verdict ({num_result.note})"
+                elif num_result.status == "not_comparable" and verdict_label == "SUPPORTED":
+                    verdict_label = "UNVERIFIABLE"
+                    confidence = scores.get("unverifiable", 0.0)
+                    reason = (
+                        "claim asserts a quantity the evidence does not state, "
+                        "so support cannot be established"
+                    )
             except Exception as e:
                 logger.warning("Numerical check failed: %s", e)
+
+        # Grounding gate: similarity is not support. Retrieval always returns
+        # its best match even when nothing relevant exists, so a passage that
+        # never mentions the claim's entities must not be able to support it.
+        if self.policy.require_grounding and verdict_label == "SUPPORTED":
+            missing = grounding_gap(claim, evidence_text)
+            if missing:
+                verdict_label = "UNVERIFIABLE"
+                confidence = scores.get("unverifiable", 0.0)
+                reason = (
+                    "evidence does not mention "
+                    + ", ".join(missing[:3])
+                    + " — the retrieved passage is similar but not about this claim"
+                )
 
         calibrated = self._calibrate_confidence(confidence, verdict_label, numerical_check)
 
         return VerificationResult(
             verdict=verdict_label,
             confidence=round(min(1.0, max(0.0, calibrated)), 3),
-            scores={k: round(v, 3) for k, v in scores.items()},
+            scores={k: round(float(v), 3) for k, v in scores.items()},
             numerical_check=numerical_check,
-            explanation=self._build_explanation(verdict_label, scores, numerical_check),
+            explanation=self._build_explanation(verdict_label, scores, numerical_check, reason),
+            evidence=evidence,
+            decision_reason=reason,
         ).to_dict()
 
     def _calibrate_confidence(
@@ -441,12 +558,19 @@ class NLIVerifier:
         verdict: str,
         scores: Dict[str, float],
         numerical_check: Optional[Dict[str, Any]],
+        reason: str = "",
     ) -> str:
         """Build a human-readable explanation for the verdict."""
-        parts = [f"Model classified as {verdict} (confidence {scores.get(verdict.lower(), 0):.1%})"]
+        parts = [f"Verdict {verdict} (entail {scores.get('supported', 0):.2f}, "
+                 f"neutral {scores.get('unverifiable', 0):.2f}, "
+                 f"contradict {scores.get('contradicted', 0):.2f})"]
+        if reason:
+            parts.append(reason)
 
         if numerical_check:
-            if numerical_check.get("consistent"):
+            if numerical_check.get("status") in ("no_numbers", "not_comparable"):
+                pass
+            elif numerical_check.get("consistent"):
                 note = numerical_check.get("note") or "no conflicting values"
                 parts.append(f"numerical values consistent ({note})")
             else:
@@ -513,7 +637,7 @@ def verify_claims(claims: List[str], evidence_passages: List[List[str]]) -> List
             indexed_pairs.append((i, (claim, passages[0])))
 
     if indexed_pairs:
-        scored = verifier.verify_pairs([p for _, p in indexed_pairs])
+        scored = verifier.verify_claims([(c, [e]) for _, (c, e) in indexed_pairs])
         for (idx, (claim, evidence)), result in zip(indexed_pairs, scored):
             result = dict(result)
             result["claim"] = claim

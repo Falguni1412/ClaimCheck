@@ -1,4 +1,4 @@
-"""
+﻿"""
 Benchmark suite for ClaimCheck.
 Measures latency, throughput, and accuracy under various conditions.
 """
@@ -55,7 +55,7 @@ def compute_stats(times_ms: List[float]) -> Dict[str, float]:
 
 def run_decomposition_benchmark(iterations: int = 100) -> BenchmarkResult:
     """Benchmark claim decomposition."""
-    from backend.api.services.decomposer import decompose_into_claims
+    from api.services.decomposer import decompose_into_claims
 
     sample_text = (
         "Metformin should be taken on an empty stomach. "
@@ -85,7 +85,7 @@ def run_decomposition_benchmark(iterations: int = 100) -> BenchmarkResult:
 
 def run_chunking_benchmark(iterations: int = 100) -> BenchmarkResult:
     """Benchmark document chunking."""
-    from backend.api.services.retriever import chunk_document
+    from api.services.retriever import chunk_document
 
     sample_doc = " ".join([
         f"This is sentence number {i} in a long medical document."
@@ -112,7 +112,7 @@ def run_chunking_benchmark(iterations: int = 100) -> BenchmarkResult:
 
 def run_numerical_check_benchmark(iterations: int = 1000) -> BenchmarkResult:
     """Benchmark numerical consistency check."""
-    from backend.api.services.numerical import check_numerical_consistency
+    from api.services.numerical import check_numerical_consistency
 
     claim = "Lactic acidosis occurs in 10% of patients."
     evidence = "Lactic acidosis is rare, occurring in 1 in 30,000 patient-years."
@@ -156,3 +156,4 @@ if __name__ == "__main__":
         run_numerical_check_benchmark(),
     ]
     print_results(results)
+

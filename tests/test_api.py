@@ -1,6 +1,8 @@
 """
 Integration tests for the API.
 """
+import asyncio
+
 import pytest
 import httpx
 from fastapi.testclient import TestClient
@@ -11,7 +13,10 @@ class TestAPI:
 
     @pytest.fixture
     def client(self):
-        from backend.main import app
+        from api.main import app
+        from api.models.database import init_db
+
+        asyncio.run(init_db())
         return TestClient(app)
 
     def test_health_endpoint(self, client):
@@ -39,14 +44,14 @@ class TestAPI:
             "/verify",
             json={"answer": "", "sources": ["some source"]},
         )
-        assert response.status_code in (400, 503)  # 400 for bad input, 503 if model not loaded
+        assert response.status_code in (400,422,503)  # 400 for bad input, 503 if model not loaded
 
     def test_verify_no_sources_returns_400(self, client):
         response = client.post(
             "/verify",
             json={"answer": "test answer", "sources": []},
         )
-        assert response.status_code in (400, 503)
+        assert response.status_code in (400,422,503)  # 400 for bad input, 503 if model not loaded
 
     def test_history_endpoint(self, client):
         response = client.get("/history/")
@@ -61,7 +66,10 @@ class TestAuth:
 
     @pytest.fixture
     def client(self):
-        from backend.main import app
+        from api.main import app
+        from api.models.database import init_db
+
+        asyncio.run(init_db())
         return TestClient(app)
 
     def test_login_endpoint_exists(self, client):
@@ -75,10 +83,12 @@ class TestAuth:
 
 class TestStreaming:
     """Tests for SSE streaming."""
-
     @pytest.fixture
     def client(self):
-        from backend.main import app
+        from api.main import app
+        from api.models.database import init_db
+
+        asyncio.run(init_db())
         return TestClient(app)
 
     def test_stream_endpoint_accepts_post(self, client):

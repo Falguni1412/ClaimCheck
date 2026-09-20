@@ -102,6 +102,21 @@ class Settings(BaseSettings):
     model_warmup: bool = True          # run one dummy forward pass at startup
     max_concurrent_inferences: int = 1 # hard cap on simultaneous model work
 
+    # ---------------- Verdict decision policy ----------------
+    # A bare argmax over three NLI classes treats "entail 0.38 / neutral 0.36"
+    # as support. These thresholds make the model assert entailment before the
+    # pipeline reports it, and abstain (UNVERIFIABLE) otherwise.
+    min_entailment: float = 0.55        # absolute floor for SUPPORTED
+    min_contradiction: float = 0.50     # absolute floor for CONTRADICTED
+    decision_margin: float = 0.10       # winning class must lead the others by this
+    require_entity_grounding: bool = True  # evidence must mention the claim's entities
+    max_premise_units: int = 12         # passages + sentences scored per claim
+    # Symbolic check for "X is a/an NOUN" category claims — catches the NLI
+    # model asserting confident (>0.8) entailment for things like "Metformin
+    # is a person" against "Metformin is a medication...". See decision.py.
+    require_category_consistency: bool = True
+    category_mismatch_confidence: float = 0.90  # confidence reported for a caught mismatch
+
     # Retrieval
     enable_semantic_retrieval: bool = True   # set false on <512MB instances
     retriever_cache_size: int = 8            # corpora kept warm (BM25 + embeddings)

@@ -1,8 +1,8 @@
-"""
+﻿"""
 Unit tests for claim decomposer.
 """
 import pytest
-from backend.api.services.decomposer import (
+from api.services.decomposer import (
     decompose_into_claims,
     extract_named_entities,
     classify_claim_type,
@@ -95,3 +95,4 @@ class TestExtractNamedEntities:
     def test_extracts_numbers(self):
         result = extract_named_entities("10% of 1,000,000 patients were affected.")
         assert "10" in result["numbers"]
+

@@ -1,8 +1,8 @@
-"""
+﻿"""
 Unit tests for numerical verification service.
 """
 import pytest
-from backend.api.services.numerical import (
+from api.services.numerical import (
     parse_number,
     extract_numbers,
     extract_dates,
@@ -99,7 +99,7 @@ class TestNumericalCheck:
             "Lactic acidosis occurs in 10% of patients.",
             "Lactic acidosis is rare, occurring in 1 in 30,000 patient-years.",
         )
-        # 10% vs 0.003% — large mismatch
+        # 10% vs 0.003% â€” large mismatch
         assert result.consistent is False
 
 
@@ -120,3 +120,4 @@ class TestUnitMismatch:
             "10 percent of patients",
         )
         assert result is None
+

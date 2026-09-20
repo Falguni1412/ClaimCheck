@@ -4,7 +4,7 @@ Extracts and cross-checks numbers, percentages, dates, and named entities
 between claims and source documents.
 """
 import re
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 
@@ -114,6 +114,92 @@ def extract_dates(text: str) -> List[Dict[str, Any]]:
     return results
 
 
+# Numbers that label a category rather than measure a quantity. "type 2
+# diabetes" contains no quantity, but the old nearest-value matcher happily
+# compared it against "$500" in a claim and declared a contradiction.
+_ORDINAL_CONTEXT = re.compile(
+    r"\b(?:type|stage|phase|grade|class|level|version|step|part|chapter|"
+    r"figure|table|section|group|tier)\s*$",
+    re.IGNORECASE,
+)
+
+_RATIO_PATTERN = re.compile(
+    r"(\d[\d,\.]*)\s*(?:in|per|out\s+of)\s*(\d[\d,\.]*)", re.IGNORECASE
+)
+
+_CURRENCY_BEFORE = re.compile(r"[$£€¥]\s*$")
+_CURRENCY_AFTER = re.compile(r"^\s*(?:dollars?|usd|eur|gbp|euros?|pounds?)\b", re.IGNORECASE)
+
+
+def _unit_class(text: str, raw: str, start: int, end: int) -> str:
+    """
+    Classify what kind of quantity a number is, so unrelated numbers are never
+    compared. Returns one of: percent, ratio, currency, plain.
+    """
+    token = raw.lower()
+    if "%" in token or "percent" in token or "per cent" in token:
+        return "percent"
+    trailing = text[end:end + 12]
+    if re.match(r"^\s*(?:%|percent|per\s*cent)", trailing, re.IGNORECASE):
+        return "percent"
+    if _CURRENCY_BEFORE.search(text[max(0, start - 3):start]) or _CURRENCY_AFTER.match(trailing):
+        return "currency"
+    return "plain"
+
+
+@dataclass
+class Quantity:
+    """A number with enough context to know whether it is comparable."""
+    value: float          # percent-normalised for percent/ratio classes
+    unit_class: str
+    text: str
+    context: str
+
+
+def extract_quantities(text: str) -> List[Quantity]:
+    """
+    Extract comparable quantities, dropping category labels and normalising
+    ratios ("1 in 30,000") onto the percent scale so they can be compared with
+    percentages.
+    """
+    quantities: List[Quantity] = []
+    consumed: List[Tuple[int, int]] = []
+
+    for m in _RATIO_PATTERN.finditer(text):
+        numerator = parse_number(m.group(1))
+        denominator = parse_number(m.group(2))
+        if numerator is None or not denominator:
+            continue
+        quantities.append(
+            Quantity(
+                value=numerator / denominator * 100.0,
+                unit_class="percent",   # ratios are compared on the percent scale
+                text=m.group(0),
+                context=text[max(0, m.start() - 40):m.end() + 40].strip(),
+            )
+        )
+        consumed.append((m.start(), m.end()))
+
+    for m in NUMBER_PATTERN.finditer(text):
+        if any(start <= m.start() < end for start, end in consumed):
+            continue  # already captured as part of a ratio
+        if _ORDINAL_CONTEXT.search(text[max(0, m.start() - 16):m.start()]):
+            continue  # "type 2", "stage 3" — a label, not a measurement
+        value = parse_number(m.group(0))
+        if value is None:
+            continue
+        quantities.append(
+            Quantity(
+                value=value,
+                unit_class=_unit_class(text, m.group(0), m.start(), m.end()),
+                text=m.group(0),
+                context=text[max(0, m.start() - 40):m.end() + 40].strip(),
+            )
+        )
+
+    return quantities
+
+
 @dataclass
 class NumericalCheck:
     """Result of a numerical consistency check."""
@@ -123,6 +209,9 @@ class NumericalCheck:
     ratio: Optional[float]
     confidence: float
     note: str = ""
+    # match | mismatch | not_comparable | no_numbers
+    # Only "mismatch" is allowed to override an NLI verdict.
+    status: str = "no_numbers"
 
 
 def check_numerical_consistency(
@@ -147,77 +236,100 @@ def check_numerical_consistency(
     Returns:
         NumericalCheck with consistency verdict
     """
-    claim_numbers = extract_numbers(claim)
-    evidence_numbers = extract_numbers(evidence)
+    claim_quantities = extract_quantities(claim)
+    evidence_quantities = extract_quantities(evidence)
 
-    # No numbers to check
-    if not claim_numbers:
+    if not claim_quantities:
+        return NumericalCheck(
+            consistent=True, claim_value=None, evidence_value=None, ratio=None,
+            confidence=0.5, note="No numerical values in claim", status="no_numbers",
+        )
+
+    if not evidence_quantities:
+        # The claim asserts a number the evidence never mentions. That is a
+        # failure to verify, NOT a contradiction — there is nothing to conflict
+        # with. evidence_value stays None so no verdict override can fire.
         return NumericalCheck(
             consistent=True,
-            claim_value=None,
+            claim_value=claim_quantities[0].value,
             evidence_value=None,
             ratio=None,
-            confidence=0.5,
-            note="No numerical values in claim",
+            confidence=0.4,
+            note="Claim contains a number the evidence does not mention",
+            status="not_comparable",
         )
 
-    # If claim has numbers but evidence has none, cannot verify
-    if not evidence_numbers:
-        return NumericalCheck(
-            consistent=False,
-            claim_value=claim_numbers[0]["value"],
-            evidence_value=None,
-            ratio=None,
-            confidence=0.6,
-            note="Claim contains numbers not found in evidence",
-        )
-
-    # Compare each claim number against the closest evidence number
-    inconsistencies = 0
     matches = 0
-    for cn in claim_numbers:
-        best_match = None
-        best_diff = float("inf")
-        for en in evidence_numbers:
-            if en["value"] == 0:
-                continue
-            diff = abs(cn["value"] - en["value"]) / abs(en["value"])
-            if diff < best_diff:
-                best_diff = diff
-                best_match = en
+    mismatches = 0
+    uncomparable = 0
+    first_pair: Optional[Tuple[float, float]] = None
+    notes: List[str] = []
 
-        if best_match and best_diff <= tolerance:
+    for cq in claim_quantities:
+        # Only compare like with like. percent and ratio share a scale (ratios
+        # are normalised to percent above); currency and plain numbers do not
+        # mix with anything else.
+        candidates = [eq for eq in evidence_quantities if eq.unit_class == cq.unit_class]
+        if not candidates:
+            uncomparable += 1
+            notes.append(f"{cq.text}: no comparable {cq.unit_class} value in evidence")
+            continue
+
+        best = min(
+            candidates,
+            key=lambda eq: abs(cq.value - eq.value) / abs(eq.value) if eq.value else float("inf"),
+        )
+        if first_pair is None:
+            first_pair = (cq.value, best.value)
+
+        if not best.value:
+            relative_diff = float("inf") if cq.value else 0.0
+        else:
+            relative_diff = abs(cq.value - best.value) / abs(best.value)
+
+        if relative_diff <= tolerance:
             matches += 1
         else:
-            inconsistencies += 1
+            mismatches += 1
+            notes.append(f"{cq.text} vs {best.text} in evidence")
 
-    if inconsistencies == 0:
+    claim_value = claim_quantities[0].value
+    evidence_value = first_pair[1] if first_pair else None
+    ratio_value = (
+        first_pair[0] / first_pair[1] if first_pair and first_pair[1] else None
+    )
+
+    if mismatches:
+        return NumericalCheck(
+            consistent=False,
+            claim_value=claim_value,
+            evidence_value=evidence_value,
+            ratio=ratio_value,
+            confidence=0.85 if matches == 0 else 0.7,
+            note="Numerical values do not match: " + "; ".join(notes[:3]),
+            status="mismatch",
+        )
+
+    if matches:
         return NumericalCheck(
             consistent=True,
-            claim_value=claim_numbers[0]["value"],
-            evidence_value=evidence_numbers[0]["value"] if evidence_numbers else None,
-            ratio=claim_numbers[0]["value"] / evidence_numbers[0]["value"] if evidence_numbers and evidence_numbers[0]["value"] != 0 else None,
+            claim_value=claim_value,
+            evidence_value=evidence_value,
+            ratio=ratio_value,
             confidence=0.95,
             note=f"All {matches} numerical value(s) match within {tolerance * 100:.0f}% tolerance",
+            status="match",
         )
-    elif matches > 0:
-        return NumericalCheck(
-            consistent=False,
-            claim_value=claim_numbers[0]["value"],
-            evidence_value=evidence_numbers[0]["value"] if evidence_numbers else None,
-            ratio=claim_numbers[0]["value"] / evidence_numbers[0]["value"] if evidence_numbers and evidence_numbers[0]["value"] != 0 else None,
-            confidence=0.7,
-            note=f"{inconsistencies} of {len(claim_numbers)} number(s) inconsistent",
-        )
-    else:
-        return NumericalCheck(
-            consistent=False,
-            claim_value=claim_numbers[0]["value"],
-            evidence_value=evidence_numbers[0]["value"] if evidence_numbers else None,
-            ratio=claim_numbers[0]["value"] / evidence_numbers[0]["value"] if evidence_numbers and evidence_numbers[0]["value"] != 0 else None,
-            confidence=0.85,
-            note="Numerical values do not match",
-        )
+
+    return NumericalCheck(
+        consistent=True,
+        claim_value=claim_value,
+        evidence_value=None,
+        ratio=None,
+        confidence=0.4,
+        note="; ".join(notes[:3]) or "No comparable numerical values",
+        status="not_comparable",
+    )
 
 
 def detect_unit_mismatch(claim: str, evidence: str) -> Optional[str]:

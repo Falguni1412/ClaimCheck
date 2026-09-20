@@ -1,8 +1,8 @@
-"""
+﻿"""
 Unit tests for evidence retriever.
 """
 import pytest
-from backend.api.services.retriever import chunk_document
+from api.services.retriever import chunk_document
 
 
 class TestChunkDocument:
@@ -54,7 +54,7 @@ class TestRetriever:
         ]
 
     def test_retrieve_returns_documents(self, documents):
-        from backend.api.services.retriever import Retriever
+        from api.services.retriever import Retriever
         try:
             retriever = Retriever(documents)
             results = retriever.retrieve("What is metformin?", top_k=2)
@@ -64,7 +64,7 @@ class TestRetriever:
             pytest.skip(f"Retriever requires ML models: {e}")
 
     def test_retrieve_with_scores(self, documents):
-        from backend.api.services.retriever import Retriever
+        from api.services.retriever import Retriever
         try:
             retriever = Retriever(documents)
             results = retriever.retrieve_with_scores("metformin", top_k=2)
@@ -74,3 +74,4 @@ class TestRetriever:
                 assert 0.0 <= score <= 1.0
         except Exception as e:
             pytest.skip(f"Retriever requires ML models: {e}")
+

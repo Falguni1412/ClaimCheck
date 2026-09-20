@@ -1,4 +1,4 @@
-"""
+﻿"""
 Webhook management endpoints.
 """
 import uuid
@@ -38,7 +38,7 @@ async def create_webhook(
     """Register a new webhook endpoint."""
     webhook = Webhook(
         url=payload.url,
-        secret=hashlib.sha256(uuid.uuid4().hex.encode()).hexdigest(),  # Random secret
+        secret=hashlib.sha256(uuid.uuid4().hex.encode()).hexdigest(),
         events=payload.events,
     )
     session.add(webhook)
@@ -46,9 +46,13 @@ async def create_webhook(
     await session.refresh(webhook)
 
     return WebhookResponse(
-        id=webhook.id, url=webhook.url, events=webhook.events,
-        is_active=webhook.is_active, created_at=webhook.created_at,
+        id=webhook.id,
+        url=webhook.url,
+        events=webhook.events,
+        is_active=webhook.is_active,
+        created_at=webhook.created_at,
         secret=webhook.secret,
+        failure_count=webhook.failure_count,
     )
 
 
@@ -115,3 +119,4 @@ async def deliver_webhook(
             logger.warning("Webhook delivery failed: %s", e)
     WEBHOOK_DELIVERIES.labels(event_type=event_type, status="failure").inc()
     return False
+

@@ -1,9 +1,9 @@
-"""
+﻿"""
 Unit tests for cache service.
 """
 import pytest
 import asyncio
-from backend.api.services.cache import InMemoryCache, CacheService, get_cache
+from api.services.cache import InMemoryCache, CacheService, get_cache
 
 
 class TestInMemoryCache:
@@ -47,7 +47,7 @@ class TestCacheService:
     async def test_connect_without_redis(self):
         """Without Redis, falls back to in-memory."""
         cache = CacheService()
-        # Don't call connect() — simulates Redis being unavailable
+        # Don't call connect() â€” simulates Redis being unavailable
         cache._use_redis = False
         await cache.set("test", {"data": "value"})
         result = await cache.get("test")
@@ -73,3 +73,4 @@ class TestCacheService:
         h1 = CacheService.hash_key("data1")
         h2 = CacheService.hash_key("data2")
         assert h1 != h2
+

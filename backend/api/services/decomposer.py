@@ -53,6 +53,8 @@ COMPOUND_SPLIT_PATTERNS = [
     (r",\s+(?:but|however|although|though|yet|whereas)\s+", re.IGNORECASE),
     (r";\s+(?=(?:it|this|that|they|he|she|the|these|those|metformin|patients?|users?|you|we|i)\b)", re.IGNORECASE),
     (r",\s+(?:additionally|moreover|furthermore|also)\s+", re.IGNORECASE),
+    (r",\s+(?=(?:needs?|has|have|had)\s+to\b)", re.IGNORECASE),
+    (r",\s+(?=(?:needs?|has|have|had)\s+to\b)", re.IGNORECASE),
 ]
 HEDGE_PREFIX = re.compile(
     r"^(?:allegedly|reportedly|supposedly|apparently|arguably|possibly|perhaps|"

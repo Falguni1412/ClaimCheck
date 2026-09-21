@@ -22,8 +22,8 @@ COPY . .
 
 RUN mkdir -p /tmp/huggingface && \
     useradd --create-home --shell /bin/bash appuser && \
-    chown -R appuser:appuser /app /tmp/huggingface && \
-    chmod -R 777 /tmp/huggingface
+    chown -R appuser:0 /app /tmp/huggingface && \
+    chmod -R g+rwX /app /tmp/huggingface
 
 USER appuser
 

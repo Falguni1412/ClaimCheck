@@ -616,32 +616,22 @@ def reset_verifier() -> None:
 
 
 # ============== Backward-compat top-level function ==============
-
-def verify_claims(claims: List[str], evidence_passages: List[List[str]]) -> List[Dict]:
+def verify_claims(
+    claims: List[str],
+    evidence_passages: List[List[str]]
+) -> List[Dict]:
     """Backward-compatible verification helper."""
     verifier = get_verifier()
-    results: List[Dict[str, Any]] = []
-    indexed_pairs: List[Tuple[int, Tuple[str, str]]] = []
 
-    for i, (claim, passages) in enumerate(zip(claims, evidence_passages)):
-        if not passages:
-            results.append({
-                "claim": claim,
-                "verdict": "UNVERIFIABLE",
-                "confidence": 0.0,
-                "evidence": "",
-                "reason": "No evidence provided",
-            })
-        else:
-            results.append({})  # placeholder, filled below
-            indexed_pairs.append((i, (claim, passages[0])))
+    items = [
+        (claim, passages)
+        for claim, passages in zip(claims, evidence_passages)
+    ]
 
-    if indexed_pairs:
-        scored = verifier.verify_claims([(c, [e]) for _, (c, e) in indexed_pairs])
-        for (idx, (claim, evidence)), result in zip(indexed_pairs, scored):
-            result = dict(result)
-            result["claim"] = claim
-            result["evidence"] = evidence
-            results[idx] = result
+    results = verifier.verify_claims(items)
+
+    for claim, passages, result in zip(claims, evidence_passages, results):
+        result["claim"] = claim
+        result["evidence"] = passages[0] if passages else ""
 
     return results
